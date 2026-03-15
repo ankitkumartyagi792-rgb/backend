@@ -5,89 +5,132 @@ import re
 import os
 
 app = Flask(__name__)
-# CORS is required to allow Frontend (different port) to talk to Backend
-CORS(app) 
 
-# Load Model and Vectorizer
-MODEL_PATH = 'model/fraud_model.pkl'
-VECTORIZER_PATH = 'model/vectorizer.pkl'
+# Allow your GitHub Pages frontend
+CORS(app, origins=["https://ankitkumartyagi05.github.io"])
+
+# Model paths
+MODEL_PATH = os.path.join("model", "fraud_model.pkl")
+VECTORIZER_PATH = os.path.join("model", "vectorizer.pkl")
 
 model = None
 vectorizer = None
 
+
+# Load ML models
 def load_models():
     global model, vectorizer
     try:
-        with open(MODEL_PATH, 'rb') as f:
+        with open(MODEL_PATH, "rb") as f:
             model = pickle.load(f)
-        with open(VECTORIZER_PATH, 'rb') as f:
+
+        with open(VECTORIZER_PATH, "rb") as f:
             vectorizer = pickle.load(f)
-        print("Models loaded successfully.")
-    except FileNotFoundError:
-        print("Model files not found. Please run train_model.py first.")
+
+        print("✅ Models loaded successfully")
+
+    except Exception as e:
+        print("❌ Error loading models:", e)
+
 
 load_models()
 
+
+# Text cleaning
 def clean_text(text):
     text = text.lower()
-    text = re.sub(r'[^a-zA-Z\s]', '', text)
+    text = re.sub(r"[^a-zA-Z\s]", "", text)
     return text
 
-def extract_urls(text):
-    # Simple regex for URLs
-    return re.findall(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', text)
 
+# URL extraction
+def extract_urls(text):
+    return re.findall(r"http[s]?://\S+", text)
+
+
+# URL risk detection
 def analyze_url(url):
-    # Simple rule-based URL check
-    suspicious_tlds = ['.xyz', '.tk', '.ml', '.ga', '.cf', '.top', '.loan']
+    suspicious_tlds = [".xyz", ".tk", ".ml", ".ga", ".cf", ".top", ".loan"]
+
     for tld in suspicious_tlds:
         if tld in url:
             return "Malicious"
+
     return "Suspicious"
 
-@app.route('/predict', methods=['POST'])
-def predict():
-    data = request.get_json()
-    message = data.get('message', '')
-    
-    if not message:
-        return jsonify({'error': 'No message provided'}), 400
 
-    # 1. Clean and Vectorize
+# Health check route
+@app.route("/")
+def home():
+    return "🚀 Fraud Detection API Running"
+
+
+# Main prediction route
+@app.route("/predict", methods=["POST"])
+def predict():
+
+    data = request.get_json()
+
+    message = data.get("message", "")
+
+    if not message:
+        return jsonify({"error": "No message provided"}), 400
+
+    if model is None or vectorizer is None:
+        return jsonify({"error": "Model not loaded"}), 500
+
+    # Clean text
     cleaned = clean_text(message)
-    if vectorizer is None or model is None:
-        return jsonify({'error': 'Model or vectorizer not loaded'}), 500
+
+    # Vectorize
     vec = vectorizer.transform([cleaned])
-    
-    # 2. Predict
+
+    # Prediction
     probability = model.predict_proba(vec)[0]
-    fraud_prob = float(probability[1]) # Probability of class 1 (Fraud)
-    
-    # 3. Determine Classification
+    fraud_prob = float(probability[1])
+
     classification = "Fraud" if fraud_prob > 0.5 else "Safe"
-    
-    # 4. Extra Analysis (URLs)
+
+    # URL analysis
     detected_links = extract_urls(message)
+
     link_status = "None"
+
     if detected_links:
         link_status = analyze_url(detected_links[0])
 
-    # 5. Suspicious Keywords Extraction (Simple logic)
+    # Suspicious keywords
     suspicious_words = []
-    fraud_keywords = ['urgent', 'verify', 'suspend', 'blocked', 'winner', 'click', 'pay', 'lottery']
+
+    fraud_keywords = [
+        "urgent",
+        "verify",
+        "suspend",
+        "blocked",
+        "winner",
+        "click",
+        "pay",
+        "lottery"
+    ]
+
     for word in fraud_keywords:
         if word in cleaned:
             suspicious_words.append(word)
 
-    response = {
-        'classification': classification,
-        'probability': round(fraud_prob, 2),
-        'detected_links': detected_links,
-        'link_status': link_status,
-        'suspicious_words': suspicious_words
+    result = {
+        "classification": classification,
+        "probability": round(fraud_prob, 2),
+        "detected_links": detected_links,
+        "link_status": link_status,
+        "suspicious_words": suspicious_words
     }
-    
-    return jsonify(response)
 
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    return jsonify(result)
+
+
+# Railway compatible run
+if __name__ == "__main__":
+
+    port = int(os.environ.get("PORT", 5000))
+
+    app.run(host="0.0.0.0", port=port)
